@@ -1,24 +1,33 @@
-import time
-import numpy as np
+import gym
 
-import rrc_simulation
+from rrc_simulation.gym_wrapper.envs import cube_env_modified
+from stable_baselines.her import GoalSelectionStrategy, HERGoalEnvWrapper, HindsightExperienceReplayWrapper
+from stable_baselines import HER, SAC
 
 if __name__ == "__main__":
 
-    platform = rrc_simulation.TriFingerPlatform(visualization=True)
+    initializer = cube_env_modified.RandomInitializer(difficulty=1)
 
-    while True:
-        position = rrc_simulation.robot_position.gym.sample()
-        finger_action = platform.Action(position=position)
+    env = gym.make(
+        "rrc_simulation.gym_wrapper:real_robot_challenge_phase_1-v2",
+        initializer=initializer,
+        action_type=cube_env_modified.ActionType.POSITION,
+        observation_type=cube_env_modified.ObservationType.BOX,
+        frameskip=100,
+        visualization=True
+    )
 
-        for _ in range(100):
-            t = platform.append_desired_action(finger_action)
-            time.sleep(platform.get_time_step())
+    model = HER('MlpPolicy', env, SAC, n_sampled_goal=4, goal_selection_strategy='future', verbose=1)
+    model.learn(1000)
 
-        # show the latest observations
-        robot_observation = platform.get_robot_observation(t)
-        print("Finger0 Joint Positions: %s" % robot_observation.position[:3])
+    model.save('./models/basic_her_train')
 
-        cube_pose = platform.get_object_pose(t)
-        print("Cube Position (x, y, z): %s" % cube_pose.position)
+    model.load('./models/basic_her_train', env=env)
 
+    obs = env.reset()
+    is_done = False
+    while not is_done:
+        action = model.predict(obs)
+        obs, rew, is_done, info = env.step(action)
+
+    print("Reward at final step: {:.3f}".format(rew))
