@@ -26,9 +26,12 @@ import sys
 
 import gym
 
-from rrc_simulation.gym_wrapper.envs import cube_env
+from rrc_simulation.gym_wrapper.envs import cube_env, cube_env_modified
 from rrc_simulation.tasks import move_cube
 
+from stable_baselines import HER
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 class RandomPolicy:
     """Dummy policy which uses random actions."""
@@ -66,15 +69,17 @@ def main():
 
     # TODO: Replace with your environment if you used a custom one.
     env = gym.make(
-        "rrc_simulation.gym_wrapper:real_robot_challenge_phase_1-v1",
+        "rrc_simulation.gym_wrapper:real_robot_challenge_phase_1-v2",
         initializer=initializer,
-        action_type=cube_env.ActionType.POSITION,
-        visualization=False,
+        action_type=cube_env_modified.ActionType.POSITION,
+        observation_type=cube_env_modified.ObservationType.BOX,
+        frameskip=100,
+        visualization=False
     )
 
     # TODO: Replace this with your model
     # Note: You may also use a different policy for each difficulty level (difficulty)
-    policy = RandomPolicy(env.action_space)
+    policy = HER.load("models/basic_her_train.zip", env=env)
 
     # Execute one episode.  Make sure that the number of simulation steps
     # matches with the episode length of the task.  When using the default Gym
@@ -84,7 +89,7 @@ def main():
     observation = env.reset()
     accumulated_reward = 0
     while not is_done:
-        action = policy.predict(observation)
+        action, _ = policy.predict(observation)
         observation, reward, is_done, info = env.step(action)
         accumulated_reward += reward
 

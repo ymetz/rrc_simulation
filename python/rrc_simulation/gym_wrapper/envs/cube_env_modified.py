@@ -229,6 +229,16 @@ class CubeEnv(gym.GoalEnv):
                     info,
                 )
         """
+
+        if isinstance(achieved_goal, np.ndarray):
+            # because during replay buffer writing, we call the method differently,
+            # re-estalish the correct format, keeps the change to env only
+            achieved_goal = {"position": achieved_goal[:3], "orientation": achieved_goal[3:]}
+            desired_goal = {"position": desired_goal[:3], "orientation": desired_goal[3:]}
+
+        if info is None:
+            info = self.info
+
         return -move_cube.evaluate_state(
             move_cube.Pose.from_dict(desired_goal),
             move_cube.Pose.from_dict(achieved_goal),
@@ -332,7 +342,9 @@ class CubeEnv(gym.GoalEnv):
 
         self.step_count = 0
 
-        return self._create_observation(0)[0]
+        obs, _ = self._create_observation(0)
+
+        return obs
 
     def seed(self, seed=None):
         """Sets the seed for this env’s random number generator.
