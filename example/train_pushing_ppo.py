@@ -30,15 +30,15 @@ def get_multi_process_env(num_of_envs):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_path", required=True, help="output path")
+    parser.add_argument("--output_path", required=False, help="output path")
     args = vars(parser.parse_args())
-    output_path = str(args["output_path"])
+    output_path = str('.')
 
     total_time_steps = 80000000
     validate_every_timesteps = 2000000
     model_path = os.path.join(output_path, "training_checkpoints")
 
-    os.makedirs(model_path)
+    os.makedirs(model_path, exist_ok=True)
 
     set_global_seeds(0)
     num_of_active_envs = 20
@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
     ckpt_frequency = int(validate_every_timesteps / num_of_active_envs)
     checkpoint_callback = CheckpointCallback(
-        save_freq=ckpt_frequency, save_path=model_path, name_prefix="model"
+        save_freq=ckpt_frequency, save_path=model_path, name_prefix="model_replicate"
     )
 
     model.learn(int(total_time_steps), callback=checkpoint_callback)

@@ -25,22 +25,17 @@ evaluate the actual performance of the policy.
 import sys
 
 import gym
+import numpy as np
 
-from rrc_simulation.gym_wrapper.envs import cube_env, cube_env_modified
+from rrc_simulation.gym_wrapper.envs.cube_env_modified import CubeEnv, ActionType, RandomInitializer, ObservationType, \
+    FlatObservationWrapper, GoalObservationWrapper, FixedInitializer
 from rrc_simulation.tasks import move_cube
+from rrc_simulation.gym_wrapper.wrappers import TimeFeatureWrapper, FrameStackWrapper
 
-from stable_baselines import HER
+from stable_baselines.common.vec_env import SubprocVecEnv, VecNormalize, VecFrameStack, DummyVecEnv
+from stable_baselines import SAC
 import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
-
-class RandomPolicy:
-    """Dummy policy which uses random actions."""
-
-    def __init__(self, action_space):
-        self.action_space = action_space
-
-    def predict(self, observation):
-        return self.action_space.sample()
 
 
 def main():
@@ -63,23 +58,30 @@ def main():
     goal_pose = move_cube.Pose.from_json(goal_pose_json)
 
     # create a FixedInitializer with the given values
-    initializer = cube_env.FixedInitializer(
+    initializer = FixedInitializer(
         difficulty, initial_pose, goal_pose
     )
 
     # TODO: Replace with your environment if you used a custom one.
-    env = gym.make(
-        "rrc_simulation.gym_wrapper:real_robot_challenge_phase_1-v2",
-        initializer=initializer,
-        action_type=cube_env_modified.ActionType.POSITION,
-        observation_type=cube_env_modified.ObservationType.BOX,
-        frameskip=100,
-        visualization=False
-    )
+    env = CubeEnv(frameskip=3,
+                      visualization=False,
+                      initializer=initializer,
+                      action_type=ActionType.POSITION,
+                      observation_type=ObservationType.WITHOUT_GOALS)
+    env = TimeFeatureWrapper(FlatObservationWrapper(env))
+
+    if difficulty == 2:
+        norm_env = VecNormalize.load("models/normalized_env_09_18_2020_01_08_25_", DummyVecEnv([lambda: env]))
+    else:
+        print("load push model")
+        norm_env = VecNormalize.load("models/normalized_env_09_17_2020_22_04_30_", DummyVecEnv([lambda: env]))
 
     # TODO: Replace this with your model
     # Note: You may also use a different policy for each difficulty level (difficulty)
-    policy = HER.load("models/basic_her_train.zip", env=env)
+    if difficulty == 2:
+        policy = SAC.load("models/checkpoint_saves/SAC_09_18_2020_01_08_25__5000000_steps.zip")
+    else:
+        policy = SAC.load("models/checkpoint_saves/SAC_09_17_2020_22_04_30__2000000_steps.zip")
 
     # Execute one episode.  Make sure that the number of simulation steps
     # matches with the episode length of the task.  When using the default Gym
@@ -89,8 +91,8 @@ def main():
     observation = env.reset()
     accumulated_reward = 0
     while not is_done:
-        action, _ = policy.predict(observation)
-        observation, reward, is_done, info = env.step(action)
+        action, _ = policy.predict(np.expand_dims(norm_env.normalize_obs(observation),  axis=0), deterministic=True)
+        observation, reward, is_done, info = env .step(action[0])
         accumulated_reward += reward
 
     print("Accumulated reward: {}".format(accumulated_reward))
