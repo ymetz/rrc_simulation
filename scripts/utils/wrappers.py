@@ -2,10 +2,32 @@ import gym
 from gym.wrappers import TimeLimit
 import numpy as np
 
+
+class DoneOnSuccessWrapper(gym.Wrapper):
+    """
+    Reset on success and offsets the reward.
+    Useful for GoalEnv.
+    """
+    def __init__(self, env, reward_offset=1.0):
+        super(DoneOnSuccessWrapper, self).__init__(env)
+        self.reward_offset = reward_offset
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        done = done or info.get('is_success', False)
+        reward += self.reward_offset
+        return obs, reward, done, info
+
+    def compute_reward(self, achieved_goal, desired_goal, info):
+        reward = self.env.compute_reward(achieved_goal, desired_goal, info)
+        return reward + self.reward_offset
+
+
 class TimeFeatureWrapper(gym.Wrapper):
     """
     Add remaining time to observation space for fixed length episodes.
     See https://arxiv.org/abs/1712.00378 and https://github.com/aravindr93/mjrl/issues/13.
+
     :param env: (gym.Env)
     :param max_steps: (int) Max number of steps of an episode
         if it is not wrapped in a TimeLimit object.
@@ -19,7 +41,6 @@ class TimeFeatureWrapper(gym.Wrapper):
         low, high = env.observation_space.low, env.observation_space.high
         low, high= np.concatenate((low, [0])), np.concatenate((high, [1.]))
         env.observation_space = gym.spaces.Box(low=low, high=high, dtype=np.float32)
-        env.reward_range = 1000
 
         super(TimeFeatureWrapper, self).__init__(env)
 
@@ -42,6 +63,7 @@ class TimeFeatureWrapper(gym.Wrapper):
     def _get_obs(self, obs):
         """
         Concatenate the time feature to the current observation.
+
         :param obs: (np.ndarray)
         :return: (np.ndarray)
         """
@@ -51,43 +73,3 @@ class TimeFeatureWrapper(gym.Wrapper):
             time_feature = 1.0
         # Optionnaly: concatenate [time_feature, time_feature ** 2]
         return np.concatenate((obs, [time_feature]))
-
-
-class FrameStackWrapper(gym.Wrapper):
-    """
-    Frame stacking wrapper for vectorized environment
-
-    :param env: (gym.env) the vectorized environment to wrap
-    :param n_stack: (int) Number of frames to stack
-    """
-    def __init__(self, env, n_stack):
-        assert isinstance(env.observation_space, gym.spaces.Box)
-        # Add a time feature to the observation
-        self.env = env
-        self.n_stack = n_stack
-
-        super(FrameStackWrapper, self).__init__(env)
-
-        wrapped_obs_space = env.observation_space
-        low = np.repeat(wrapped_obs_space.low, self.n_stack, axis=-1)
-        high = np.repeat(wrapped_obs_space.high, self.n_stack, axis=-1)
-        self.stackedobs = np.zeros(low.shape, low.dtype)
-        self.observation_space = gym.spaces.Box(low=low, high=high, dtype=env.observation_space.dtype)
-
-
-
-    def reset(self):
-        obs = self.env.reset()
-        self.stackedobs[...] = 0
-        self.stackedobs[-obs.shape[-1]:] = obs
-        return self.stackedobs
-
-    def step(self, action):
-        obs, reward, done, info = self.env.step(action)
-        last_ax_size = obs.shape[-1]
-        self.stackedobs = np.roll(self.stackedobs, shift=-last_ax_size, axis=-1)
-        self.stackedobs[-obs.shape[-1]:] = obs
-        return self.stackedobs, reward, done, info
-
-    def close(self):
-        self.env.close()

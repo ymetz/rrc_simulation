@@ -63,25 +63,26 @@ def main():
     )
 
     # TODO: Replace with your environment if you used a custom one.
-    env = CubeEnv(frameskip=3,
+    env = CubeEnv(frameskip=5,
                       visualization=False,
                       initializer=initializer,
                       action_type=ActionType.POSITION,
-                      observation_type=ObservationType.WITHOUT_GOALS)
-    env = TimeFeatureWrapper(FlatObservationWrapper(env))
+                      observation_type=ObservationType.WITHOUT_GOALS,
+                      testing=True)
+    env = FrameStackWrapper(TimeFeatureWrapper(FlatObservationWrapper(env)), 4)
+    #env = TimeFeatureWrapper(FlatObservationWrapper(env))
 
-    if difficulty == 2:
-        norm_env = VecNormalize.load("models/normalized_env_09_18_2020_01_08_25_", DummyVecEnv([lambda: env]))
-    else:
-        print("load push model")
-        norm_env = VecNormalize.load("models/normalized_env_09_17_2020_22_04_30_", DummyVecEnv([lambda: env]))
+    norm_env = VecNormalize.load("models/normalized_env_frame_stacked_model", DummyVecEnv([lambda: env]))
 
-    # TODO: Replace this with your model
-    # Note: You may also use a different policy for each difficulty level (difficulty)
-    if difficulty == 2:
-        policy = SAC.load("models/checkpoint_saves/SAC_09_18_2020_01_08_25__5000000_steps.zip")
-    else:
-        policy = SAC.load("models/checkpoint_saves/SAC_09_17_2020_22_04_30__2000000_steps.zip")
+
+    if difficulty == 1:
+        policy = SAC.load("models/checkpoint_saves/CONTINUE_SAC_09_19_2020_01_55_01__1000000_steps.zip")
+    elif difficulty == 2:
+        policy = SAC.load("models/checkpoint_saves/CONTINUE_SAC_09_19_2020_01_55_06__1000000_steps.zip")
+    elif difficulty == 3:
+        policy = SAC.load("models/checkpoint_saves/CONTINUE_SAC_09_19_2020_01_55_14__1000000_steps.zip")
+    elif difficulty == 4:
+        policy = SAC.load("models/checkpoint_saves/CONTINUE_SAC_09_19_2020_01_55_18__1000000_steps.zip")
 
     # Execute one episode.  Make sure that the number of simulation steps
     # matches with the episode length of the task.  When using the default Gym

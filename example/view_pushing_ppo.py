@@ -34,7 +34,7 @@ if __name__ == "__main__":
     # however, unlike during the training, we set the initialization to the the
     # same as in the standard CubeEnv, since this is what the policy will be
     # evaluated on eventually.
-    initializer = cube_env.RandomInitializer(difficulty=1) # difficulty one means pushing
+    initializer = cube_env.RandomInitializer(difficulty=2) # difficulty one means pushing
     env = ExamplePushingTrainingEnv(initializer=initializer, 
                                     frameskip=3, 
                                     visualization=True)

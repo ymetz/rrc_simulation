@@ -1,0 +1,12 @@
+real_robot_challenge_phase_1-v2:
+  env_kwargs:
+    frameskip: 5
+    visualization: False
+    n_timesteps: !!float 60000
+    difficulty: 1
+    testing: False
+  normalize: "{'norm_obs': True, 'norm_reward': False}"
+  env_wrapper:
+    - rrc_simulation.gym_wrapper.envs.cube_env_modified.FlatObservationWrapper:
+        amplitude_scaling: True
+    - rrc_simulation.gym_wrapper.wrappers.TimeFeatureWrapper

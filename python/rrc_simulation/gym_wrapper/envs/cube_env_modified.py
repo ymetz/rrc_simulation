@@ -3,6 +3,8 @@ import enum
 
 import numpy as np
 import gym
+import random
+import math
 
 from rrc_simulation import TriFingerPlatform
 from rrc_simulation import visual_objects
@@ -27,6 +29,22 @@ class RandomInitializer:
     def get_goal(self):
         """Get a random goal depending on the difficulty."""
         return move_cube.sample_goal(difficulty=self.difficulty)
+
+
+class CompletelyRandomInitializer:
+    """Initializer that samples random initial states and goals."""
+
+    def __init__(self):
+        self.difficulty = 1
+
+    def get_initial_state(self):
+        """Get a random initial object pose (always on the ground)."""
+        return move_cube.sample_goal(difficulty=-1)
+
+    def get_goal(self):
+        """Get a random goal depending on the difficulty."""
+        self.difficulty = random.randrange(1, 5)
+        return move_cube.sample_goal(difficulty=self.difficulty )
 
 
 class FixedInitializer:
@@ -94,12 +112,12 @@ class FlatObservationWrapper(gym.ObservationWrapper):
         self.amplitude_scaling = amplitude_scaling
 
         low = [
-            self.observation_space[name].low.flatten()
+            self.observation_space["observation"][name].low.flatten()
             for name in self.observation_names
         ]
 
         high = [
-            self.observation_space[name].high.flatten()
+            self.observation_space["observation"][name].high.flatten()
             for name in self.observation_names
         ]
 
@@ -108,7 +126,7 @@ class FlatObservationWrapper(gym.ObservationWrapper):
         )
 
     def observation(self, obs):
-        observation = [obs[name].flatten() for name in self.observation_names]
+        observation = [obs["observation"][name].flatten() for name in self.observation_names]
 
         observation = np.concatenate(observation)
         if self.amplitude_scaling:
@@ -170,23 +188,24 @@ class GoalObservationWrapper(gym.ObservationWrapper):
         return observation
 
 
-class CubeEnv(gym.Env):
+class CubeEnv(gym.GoalEnv):
     """Gym environment for moving cubes with simulated TriFingerPro."""
 
     def __init__(
-            self,
-            initializer=None,
-            action_type=ActionType.POSITION,
-            observation_type=None,
-            frameskip=1,
-            visualization=False,
+        self,
+        initializer,
+        action_type=ActionType.POSITION,
+        observation_type=None,
+        frameskip=1,
+        visualization=False,
+        testing=False
     ):
         """Initialize.
 
         Args:
             initializer: Initializer class for providing initial cube pose and
-                goal pose. If no initializer is provided, we will initialize in a way
-                which is be helpful for learning.
+                goal pose.  See :class:`RandomInitializer` and
+                :class:`FixedInitializer`.
             action_type (ActionType): Specify which type of actions to use.
                 See :class:`ActionType` for details.
             frameskip (int):  Number of actual control steps to be performed in
@@ -201,6 +220,10 @@ class CubeEnv(gym.Env):
         self.action_type = action_type
         self.visualization = visualization
 
+        # TODO: The name "frameskip" makes sense for an atari environment but
+        # not really for our scenario.  The name is also misleading as
+        # "frameskip = 1" suggests that one frame is skipped while it actually
+        # means "do one step per step" (i.e. no skip).
         if frameskip < 1:
             raise ValueError("frameskip cannot be less than 1.")
         self.frameskip = frameskip
@@ -213,15 +236,30 @@ class CubeEnv(gym.Env):
 
         spaces = TriFingerPlatform.spaces
 
+        object_state_space = gym.spaces.Dict(
+            {
+                "position": spaces.object_position.gym,
+                "orientation": spaces.object_orientation.gym,
+            }
+        )
+
         if self.action_type == ActionType.TORQUE:
-            self.action_space = spaces.robot_torque.gym
+            self.unscaled_action_space = spaces.robot_torque.gym
+            self.action_space = gym.spaces.Box(low=-np.ones((9,)), high=np.ones((9,)))
         elif self.action_type == ActionType.POSITION:
-            self.action_space = spaces.robot_position.gym
+            self.unscaled_action_space = spaces.robot_position.gym
+            self.action_space = gym.spaces.Box(low=-np.ones((9,)), high=np.ones((9,)))
         elif self.action_type == ActionType.TORQUE_AND_POSITION:
-            self.action_space = gym.spaces.Dict(
+            self.unscaled_action_space = gym.spaces.Dict(
                 {
                     "torque": spaces.robot_torque.gym,
                     "position": spaces.robot_position.gym,
+                }
+            )
+            self.action_space = gym.spaces.Dict(
+                {
+                    "torque": gym.spaces.Box(low=-np.ones((9,)), high=np.ones((9,))),
+                    "position": gym.spaces.Box(low=-np.ones((9,)), high=np.ones((9,))),
                 }
             )
         else:
@@ -238,19 +276,108 @@ class CubeEnv(gym.Env):
 
         self.observation_space = gym.spaces.Dict(
             {
-                "robot_position": spaces.robot_position.gym,
-                "robot_velocity": spaces.robot_velocity.gym,
-                "robot_tip_positions": gym.spaces.Box(
-                    low=np.array([spaces.object_position.low] * 3),
-                    high=np.array([spaces.object_position.high] * 3),
+                "observation": gym.spaces.Dict(
+                    {
+                        "robot_position": spaces.robot_position.gym,
+                        "robot_velocity": spaces.robot_velocity.gym,
+                        "robot_tip_positions": gym.spaces.Box(
+                            low=np.array([spaces.object_position.low] * 3),
+                            high=np.array([spaces.object_position.high] * 3),
+                        ),
+                        "object_position": spaces.object_position.gym,
+                        "object_orientation": spaces.object_orientation.gym,
+                        "goal_object_position": spaces.object_position.gym,
+                    }
                 ),
-                "object_position": spaces.object_position.gym,
-                "object_orientation": spaces.object_orientation.gym,
-                "goal_object_position": spaces.object_position.gym,
+                "desired_goal": object_state_space,
+                "achieved_goal": object_state_space,
             }
         )
 
+        smoothing_params = {
+            "num_episodes": 1000,
+            "start_after": 3.0 / 7.0,
+            "final_alpha": 0.975,
+            "stop_after": 5.0 / 7.0,
+        }
+        if testing:
+            self.smoothing_start_episode = 0
+            self.smoothing_alpha = smoothing_params["final_alpha"]
+            self.smoothing_increase_step = 0
+            self.smoothing_stop_episode = math.inf
+        else:
+            self.smoothing_stop_episode = int(
+                smoothing_params["num_episodes"]
+                * smoothing_params["stop_after"]
+            )
+
+            self.smoothing_start_episode = int(
+                smoothing_params["num_episodes"]
+                * smoothing_params["start_after"]
+            )
+            num_smoothing_increase_steps = (
+                    self.smoothing_stop_episode - self.smoothing_start_episode
+            )
+            self.smoothing_alpha = 0
+            self.smoothing_increase_step = (
+                    smoothing_params["final_alpha"] / num_smoothing_increase_steps
+            )
+
+        self.smoothed_action = None
+        self.episode_count = 0
+
+    @staticmethod
+    def compute_reward(previous_observation, observation):
+
+        # calculate first reward term
+        current_distance_from_block = np.linalg.norm(
+            observation["robot_tip_positions"] - observation["object_position"]
+        )
+        previous_distance_from_block = np.linalg.norm(
+            previous_observation["robot_tip_positions"]
+            - previous_observation["object_position"]
+        )
+
+        reward_term_1 = (
+            previous_distance_from_block - current_distance_from_block
+        )
+
+        # calculate second reward term
+        current_dist_to_goal = np.linalg.norm(
+            observation["goal_object_position"]
+            - observation["object_position"]
+        )
+        previous_dist_to_goal = np.linalg.norm(
+            previous_observation["goal_object_position"]
+            - previous_observation["object_position"]
+        )
+        reward_term_2 = previous_dist_to_goal - current_dist_to_goal
+
+        reward = 500 * reward_term_1 + 500 * reward_term_2
+
+        return reward
+
     def step(self, action):
+        """Run one timestep of the environment's dynamics.
+
+        When end of episode is reached, you are responsible for calling
+        ``reset()`` to reset this environment's state.
+
+        Args:
+            action: An action provided by the agent (depends on the selected
+                :class:`ActionType`).
+
+        Returns:
+            tuple:
+
+            - observation (dict): agent's observation of the current
+              environment.
+            - reward (float) : amount of reward returned after previous action.
+            - done (bool): whether the episode has ended, in which case further
+              step() calls will return undefined results.
+            - info (dict): info dictionary containing the difficulty level of
+              the goal.
+        """
         if self.platform is None:
             raise RuntimeError("Call `reset()` before starting to step.")
 
@@ -267,6 +394,18 @@ class CubeEnv(gym.Env):
             excess = step_count_after - move_cube.episode_length
             num_steps = max(1, num_steps - excess)
 
+        unscaled_action = self.unscale_action(action, self.unscaled_action_space)
+
+        if self.smoothed_action is None:
+            # start with current position
+            # self.smoothed_action = self.finger.observation.position
+            self.smoothed_action = unscaled_action
+
+        self.smoothed_action = (
+            self.smoothing_alpha * self.smoothed_action
+            + (1 - self.smoothing_alpha) * action
+        )
+
         reward = 0.0
         for _ in range(num_steps):
             self.step_count += 1
@@ -274,15 +413,18 @@ class CubeEnv(gym.Env):
                 raise RuntimeError("Exceeded number of steps for one episode.")
 
             # send action to robot
-            robot_action = self._gym_action_to_robot_action(action)
+            robot_action = self._gym_action_to_robot_action(self.smoothed_action)
             t = self.platform.append_desired_action(robot_action)
 
+            # Use observations of step t + 1 to follow what would be expected
+            # in a typical gym environment.  Note that on the real robot, this
+            # will not be possible
             previous_observation = self._create_observation(t)
             observation = self._create_observation(t + 1)
 
-            reward += self._compute_reward(
-                previous_observation=previous_observation,
-                observation=observation,
+            reward += self.compute_reward(
+                previous_observation=previous_observation["observation"],
+                observation=observation["observation"],
             )
 
         is_done = self.step_count == move_cube.episode_length
@@ -294,30 +436,11 @@ class CubeEnv(gym.Env):
         del self.platform
 
         # initialize simulation
-        if self.initializer is None:
-            # if no initializer is given (which will be the case during training),
-            # we can initialize in any way desired. here, we initialize the cube always
-            # in the center of the arena, instead of randomly, as this appears to help
-            # training
-            initial_robot_position = TriFingerPlatform.spaces.robot_position.default
-            default_object_position = (
-                TriFingerPlatform.spaces.object_position.default
-            )
-            default_object_orientation = (
-                TriFingerPlatform.spaces.object_orientation.default
-            )
-            initial_object_pose = move_cube.Pose(
-                position=default_object_position,
-                orientation=default_object_orientation,
-            )
-            goal_object_pose = move_cube.sample_goal(difficulty=1)
-        else:
-            # if an initializer is given, i.e. during evaluation, we need to initialize
-            # according to it, to make sure we remain coherent with the standard CubeEnv.
-            # otherwise the trajectories produced during evaluation will be invalid.
-            initial_robot_position = TriFingerPlatform.spaces.robot_position.default
-            initial_object_pose = self.initializer.get_initial_state()
-            goal_object_pose = self.initializer.get_goal()
+        initial_robot_position = (
+            TriFingerPlatform.spaces.robot_position.default
+        )
+        initial_object_pose = self.initializer.get_initial_state()
+        goal_object_pose = self.initializer.get_goal()
 
         self.platform = TriFingerPlatform(
             visualization=self.visualization,
@@ -329,6 +452,12 @@ class CubeEnv(gym.Env):
             "position": goal_object_pose.position,
             "orientation": goal_object_pose.orientation,
         }
+
+        # updates smoothing parameters
+        self.update_smoothing()
+        self.episode_count += 1
+        self.smoothed_action = None
+
         # visualize the goal
         if self.visualization:
             self.goal_marker = visual_objects.CubeMarker(
@@ -338,13 +467,26 @@ class CubeEnv(gym.Env):
                 physicsClientId=self.platform.simfinger._pybullet_client_id,
             )
 
-        self.info = dict()
+        self.info = {"difficulty": self.initializer.difficulty}
 
         self.step_count = 0
 
         return self._create_observation(0)
 
     def seed(self, seed=None):
+        """Sets the seed for this env’s random number generator.
+
+        .. note::
+
+           Spaces need to be seeded separately.  E.g. if you want to sample
+           actions directly from the action space using
+           ``env.action_space.sample()`` you can set a seed there using
+           ``env.action_space.seed()``.
+
+        Returns:
+            List of seeds used by this environment.  This environment only uses
+            a single seed, so the list contains only one element.
+        """
         self.np_random, seed = gym.utils.seeding.np_random(seed)
         move_cube.random = self.np_random
         return [seed]
@@ -358,45 +500,21 @@ class CubeEnv(gym.Env):
         robot_tip_positions = np.array(robot_tip_positions)
 
         observation = {
-            "robot_position": robot_observation.position,
-            "robot_velocity": robot_observation.velocity,
-            "robot_tip_positions": robot_tip_positions,
-            "object_position": object_observation.position,
-            "object_orientation": object_observation.orientation,
-            "goal_object_position": self.goal["position"],
+            "observation": {
+                "robot_position": robot_observation.position,
+                "robot_velocity": robot_observation.velocity,
+                "robot_tip_positions": robot_tip_positions,
+                "object_position": object_observation.position,
+                "object_orientation": object_observation.orientation,
+                "goal_object_position": self.goal["position"],
+            },
+            "desired_goal": self.goal,
+            "achieved_goal": {
+                "position": object_observation.position,
+                "orientation": object_observation.orientation,
+            },
         }
         return observation
-
-    @staticmethod
-    def _compute_reward(previous_observation, observation):
-
-        # calculate first reward term
-        current_distance_from_block = np.linalg.norm(
-            observation["robot_tip_positions"] - observation["object_position"]
-        )
-        previous_distance_from_block = np.linalg.norm(
-            previous_observation["robot_tip_positions"]
-            - previous_observation["object_position"]
-        )
-
-        reward_term_1 = (
-                previous_distance_from_block - current_distance_from_block
-        )
-
-        # calculate second reward term
-        current_dist_to_goal = np.linalg.norm(
-            observation["goal_object_position"]
-            - observation["object_position"]
-        )
-        previous_dist_to_goal = np.linalg.norm(
-            previous_observation["goal_object_position"]
-            - previous_observation["object_position"]
-        )
-        reward_term_2 = previous_dist_to_goal - current_dist_to_goal
-
-        reward = 750 * reward_term_1 + 250 * reward_term_2
-
-        return reward
 
     def _gym_action_to_robot_action(self, gym_action):
         # construct robot action depending on action type
@@ -412,3 +530,27 @@ class CubeEnv(gym.Env):
             raise ValueError("Invalid action_type")
 
         return robot_action
+
+    def update_smoothing(self):
+        """
+        Update the smoothing coefficient with which the action to be
+        applied is smoothed
+        """
+        if (
+            self.smoothing_start_episode
+            <= self.episode_count
+            < self.smoothing_stop_episode
+        ):
+            self.smoothing_alpha += self.smoothing_increase_step
+        print(
+            "episode: {}, smoothing: {}".format(
+                self.episode_count, self.smoothing_alpha
+            )
+        )
+
+    @staticmethod
+    def unscale_action(y, space):
+        """
+        Unscale some input from [-1;1] to the range of another space
+        """
+        return space.low + (y + 1.0) / 2.0 * (space.high - space.low)

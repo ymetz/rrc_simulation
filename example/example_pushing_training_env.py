@@ -180,7 +180,7 @@ class ExamplePushingTrainingEnv(gym.Env):
             # according to it, to make sure we remain coherent with the standard CubeEnv.
             # otherwise the trajectories produced during evaluation will be invalid.
             initial_robot_position = TriFingerPlatform.spaces.robot_position.default
-            initial_object_pose=self.initializer.get_initial_state()
+            initial_object_pose = self.initializer.get_initial_state()
             goal_object_pose = self.initializer.get_goal()
             
         self.platform = TriFingerPlatform(
