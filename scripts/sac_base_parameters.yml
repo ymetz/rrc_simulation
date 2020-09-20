@@ -1,11 +1,16 @@
-real_robot_challenge_phase_1-v2:
-  env_kwargs:
-    frameskip: 5
-    visualization: False
-    n_timesteps: !!float 60000
-    difficulty: 1
-    testing: False
+real_robot_challenge_phase_1-v3:
   normalize: "{'norm_obs': True, 'norm_reward': False}"
+  n_timesteps: !!float 2e6
+  policy: 'MlpPolicy'
+  learning_rate: !!float 3e-4
+  buffer_size: 1000000
+  batch_size: 256
+  ent_coef: 'auto'
+  gamma: 0.98
+  train_freq: 1
+  tau: 0.01
+  gradient_steps: 1
+  learning_starts: 10000
   env_wrapper:
     - rrc_simulation.gym_wrapper.envs.cube_env_modified.FlatObservationWrapper:
         amplitude_scaling: True

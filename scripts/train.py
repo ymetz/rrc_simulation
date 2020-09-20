@@ -244,7 +244,9 @@ if __name__ == '__main__':
         # Do not log eval env (issue with writing the same file)
         log_dir = None if eval_env or no_log else save_path
 
-        if "initializer" in env_kwargs.keys():
+        # Set initialzier and action type for environment, standard implementation currently does not support
+        # custom types, so pass them here (kwargs is global, so do set again during repeated calls)
+        if "initializer" in env_kwargs.keys() and isinstance(env_kwargs["initializer"], int):
             if env_kwargs["initializer"] == 0:
                 env_kwargs["initializer"] = RandomInitializer(env_kwargs.pop("difficulty"))
             elif env_kwargs["initializer"] == 1:
@@ -252,7 +254,7 @@ if __name__ == '__main__':
             else:
                 raise RuntimeError('Unsupported initializer "{}"'.format(env_kwargs["initializer"]))
 
-        if "action_type" in env_kwargs.keys():
+        if "action_type" in env_kwargs.keys() and isinstance(env_kwargs["action_type"], int):
             if env_kwargs["action_type"] == "POSITION":
                 env_kwargs["action_type"] = ActionType.POSITION
             elif env_kwargs["action_type"] == "TORQUE":
@@ -261,6 +263,8 @@ if __name__ == '__main__':
                 env_kwargs["action_type"] = ActionType.TORQUE_AND_POSITION
             else:
                 raise RuntimeError('Unsupported Action Type"{}"'.format(kwargs["action_type"]))
+        else:
+            env_kwargs["action_type"] = ActionType.POSITION
 
         if is_atari:
             if args.verbose > 0:
